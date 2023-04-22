@@ -5,8 +5,9 @@ provider "aws" {
 data "aws_availability_zones" "available" {}
 
 locals {
-  name   = "sandbox"
-  region = "ap-southeast-1"
+  name    = "sandbox"
+  version = "1.23"
+  region  = "ap-southeast-1"
 
   vpc_cidr = "10.0.0.0/16"
   azs      = slice(data.aws_availability_zones.available.names, 0, 3)
@@ -21,6 +22,7 @@ module "eks" {
   version = "~> 19.0"
 
   cluster_name                   = local.name
+  cluster_version                = local.version
   cluster_endpoint_public_access = true
 
   cluster_addons = {
@@ -38,6 +40,10 @@ module "eks" {
     }
     vpc-cni = {
       most_recent = true
+    }
+    aws-ebs-csi-driver = {
+      most_recent = true
+      service_account_role_arn = module.ebs_csi_irsa_role.iam_role_arn
     }
   }
 
@@ -60,7 +66,7 @@ module "eks" {
       # By default, the module creates a launch template to ensure tags are propagated to instances, etc.,
       # so we need to disable it to use the default template provided by the AWS EKS managed node group service
       use_custom_launch_template = false
-
+      use_name_prefix = false
       ami_type = "BOTTLEROCKET_ARM_64"
       platform = "bottlerocket"
       
@@ -96,6 +102,22 @@ module "vpc" {
 
   private_subnet_tags = {
     "kubernetes.io/role/internal-elb" = 1
+  }
+
+  tags = local.tags
+}
+
+module "ebs_csi_irsa_role" {
+  source      = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+
+  role_name   = "ebs-csi"
+  attach_ebs_csi_policy = true
+
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
+    }
   }
 
   tags = local.tags
